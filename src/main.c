@@ -176,9 +176,9 @@ int main(int argc, char* argv[]){
 		}
 	}
 
-	printf("START ADDR: %.4X INTERRUPT ADDR: %.4X\n", startLabel->value, intLabel->value);
 	testError(!startLabel, "no start label");
 	testError(!intLabel, "no interrupt label");
+	printf("START ADDR: %.4X INTERRUPT ADDR: %.4X\n", startLabel->value, intLabel->value);
 	memImage[0x7FFC] = startLabel->value;
 	memImage[0x7FFD] = startLabel->value >> 8;
 	memImage[0x7FFE] = intLabel->value;
