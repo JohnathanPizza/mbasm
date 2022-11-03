@@ -18,12 +18,14 @@ void listAdd(struct List* list, const void* data, size_t count){
 			list->bytesAllocated += list->allocStep * list->elementSize;
 		}
 		// copy into array per byte
-		unsigned char* insertPoint = (unsigned char*)list->data + list->elementCount * list->elementSize;
-		for(size_t byteidx = 0; byteidx < list->elementSize; ++byteidx){
-			insertPoint[byteidx] = ((unsigned char*)data)[byteidx + dataidx * list->elementSize];
+		if(data){
+			unsigned char* insertPoint = (unsigned char*)list->data + list->elementCount * list->elementSize;
+			for(size_t byteidx = 0; byteidx < list->elementSize; ++byteidx){
+				insertPoint[byteidx] = ((unsigned char*)data)[byteidx + dataidx * list->elementSize];
+			}
 		}
 		++list->elementCount;
-		}
+	}
 }
 
 void* listAt(struct List list, size_t idx){

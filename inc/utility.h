@@ -4,14 +4,22 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "types.h"
+#include "list.h"
 
 // macro function for testing if a piece type counts as the end of an expression
 #define IS_EXPR_END(t) ((t) == PT_LINE || (t) == PT_EXPR_DELIM)
 
-// macro function for quickly getting pointer to string in the global stringCharsList object from an index
-#define ESTR(idx) ((char*)listAt(stringCharsList, idx))
+extern struct FileData* filesArray;
+struct FileData newFileData(const char* name);
 
-int strToInt(const char in[], int len);
+extern unsigned char* memImage;
+extern size_t memIdx;
+
+//extern struct List stringCharsList;
+
+// helper function to quickly get pointer to string in stringCharsList
+
+//int strToInt(const char in[], int len);
 
 /*
  * parses a string from array in with string length len
@@ -20,7 +28,7 @@ int strToInt(const char in[], int len);
  * can fail from incorrect characters/values used in the number
  * works for base 2, 8, 10, and 16 with, respectively, 0BN, 0N, N, and 0XN where N is the number in each base ("0B" and "0X" return 0)
  */
-
+extern int fssize;
 bool evalExpression(struct Piece p[], int* res);
 
 /*
@@ -47,7 +55,7 @@ char* printExpr(struct Piece p[]);
  * the returned string is nul-terminated
  */
 
-bool commandHandler(struct Piece in[]);
+bool commandHandler(struct Piece in[], struct FileData* f);
 
 /*
  * NOT defined in utility.c
@@ -55,7 +63,8 @@ bool commandHandler(struct Piece in[]);
  * returns true on success; false on failure
  */
 
-void createPiecesFromFile(const char filename[]);
+//*
+void createPieces(struct FileData* f);
 
 /*
  * opens a file with filename, reads all of the contents and creates pieces, then closes the file
@@ -65,7 +74,8 @@ void createPiecesFromFile(const char filename[]);
  * discriminates symbols based on an internal array of characters
  */
 
-int scanPieces(int pieceStart);
+//*
+int scanPieces(struct FileData* f);
 
 /*
  * goes through and evaluates lines of pieces from the global pieceList list starting at index pieceStart
@@ -75,7 +85,7 @@ int scanPieces(int pieceStart);
  * the line number starts at 1 and is updated after an amount of pieces processed represents a line
  */
 
-struct Piece* getInsLine(struct Piece p[], struct Instruction* out);
+struct Piece* getInsLine(struct Piece p[], struct Instruction* out, struct FileData* f);
 
 /*
  * forms an instruction from an instruction line from array p and stores resulting instruction in *out

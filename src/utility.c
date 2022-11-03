@@ -7,50 +7,8 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include "ins_values.h"
-
-extern struct List instructionList;
-extern struct List stringCharsList;
-extern struct List pieceList;
-extern struct List labelList;
-extern unsigned char* memImage;
-extern size_t memIdx;
-
-// parse a string representing an integer and return it
-int strToInt(const char in[], int len){
-	if(len <= 0){
-		return 0;
-	}
-	int base = 10; // decimal is default base
-	if(in[0] == '0' && len > 1){
-		// 0X is hex, 0B is bin
-		if(in[1] == 'B' || in[1] == 'X'){
-			base = (in[1] == 'B' ? 2 : 16);
-			in += 2;
-			len -= 2;
-		}else{ // 0N is octal
-			base = 8;
-			in += 1;
-			len -= 1;
-		}
-	}
-	int value = 0;
-	for(int idx = 0; idx < len; ++idx){
-		value *= base;
-		int charValue = base;
-		char c = in[idx];
-		if(c >= '0' && c <= '9'){
-			charValue = c - '0';
-		}else if(c >= 'A' && c <= 'F'){
-			charValue = c - 'A' + 10;
-		}
-		// fail if digit not valid for base
-		if(charValue >= base){
-			return -1;
-		}
-		value += charValue;
-	}
-	return value;
-}
+#include "stringmanip.h"
+#include <stdio.h>
 
 // evaluate an expression from an array of pieces starting at p and store the result in res, return if it was successful
 bool evalExpression(struct Piece p[], int* res){
@@ -61,18 +19,24 @@ bool evalExpression(struct Piece p[], int* res){
 			case PT_STRING:
 				// is a label, find a matching name and use it if it is a defined label
 				;
-				bool found = false;
-				for(struct Label* l = listBeg(labelList); l != listEnd(labelList); ++l){
-					if(!strcmp(ESTR(l->name), ESTR(p->stridx))){
-						if(l->type == LT_DEFINED){
-							found = true;
-							listAdd(&valueList, &l->value, 1);
+				int found = 0;
+				for(int a = 0; a < fssize; ++a){
+					for(struct Label* l = listBeg(filesArray[a].labels); l != listEnd(filesArray[a].labels); ++l){
+						if(!strcmp(stringAt(l->name), stringAt(p->stridx))){
+							++found;
+							if(l->type == LT_DEFINED){
+								++found;
+								listAdd(&valueList, &l->value, 1);
+							}
+							break;
 						}
+					}
+					if(found){
 						break;
 					}
 				}
-				if(!found){
-					addErrorMessage("string \"%s\" did not match any defined labels", ESTR(p->stridx));
+				if(found != 2){
+					addErrorMessage("string \"%s\" did not match any defined labels", stringAt(p->stridx));
 					return false;
 				}
 				break;
@@ -131,10 +95,12 @@ int exprArrayLen(const struct Piece p[]){
 char* printExpr(struct Piece p[]){
 	static char exprbuf[200] = {0};
 	static char formatbuf[100] = {0};
+	exprbuf[0] = 0;
+	formatbuf[0] = 0;
 	for(; !IS_EXPR_END(p->type); ++p){
 		switch(p->type){
 			case PT_STRING:
-				strcat(exprbuf, ESTR(p->stridx));
+				strcat(exprbuf, stringAt(p->stridx));
 				strcat(exprbuf, " ");
 				break;
 			case PT_INTEGER:
@@ -154,7 +120,7 @@ char* printExpr(struct Piece p[]){
 }
 
 // create a chain of pieces from input text and use the string "symbols" as symbol characters
-void createPiecesFromFile(const char filename[]){
+void createPieces(struct FileData* f){
 	static const char symbols[] = {
 		PT_DOT,
 		PT_EXPR_DELIM,
@@ -168,8 +134,8 @@ void createPiecesFromFile(const char filename[]){
 		0
 	};
 
-	FILE* file = fopen(filename, "r");
-	testError(!file, "error opening file \"%s\": %s", filename, strerror(errno));
+	FILE* file = fopen(f->name, "r");
+	testError(!file, "error opening file \"%s\": %s", f->name, strerror(errno));
 
 	char* line = NULL;
 	size_t n = 0;
@@ -212,7 +178,7 @@ void createPiecesFromFile(const char filename[]){
 					}
 				}
 
-				// add piece to piece chain
+				// add piece to piece list
 				int v;
 				struct Piece p;
 				if(!inLit && (v = strToInt(stringPieceBegin, len)) >= 0){
@@ -220,12 +186,9 @@ void createPiecesFromFile(const char filename[]){
 					p.integer = v;
 				}else{
 					p.type = PT_STRING;
-					p.stridx = stringCharsList.elementCount;
-					listAdd(&stringCharsList, stringPieceBegin, len);
-					// end string with nul char
-					listAdd(&stringCharsList, &(char){0}, 1);
+					p.stridx = addString(stringPieceBegin, len);
 				}
-				listAdd(&pieceList, &p, 1);
+				listAdd(&f->pieces, &p, 1);
 				inLit = false;
 			}
 
@@ -233,7 +196,7 @@ void createPiecesFromFile(const char filename[]){
 			if(symbol){
 				inString = false;
 				struct Piece p = {.type = symbol};
-				listAdd(&pieceList, &p, 1);
+				listAdd(&f->pieces, &p, 1);
 				// break on newline to loop to next line
 				if(symbol == PT_LINE){
 					break;
@@ -243,11 +206,11 @@ void createPiecesFromFile(const char filename[]){
 		}
 	}
 	free(line);
-	testError(fclose(file), "error closing file \"%s\": %s", filename, strerror(errno));
+	testError(fclose(file), "error closing file \"%s\": %s", f->name, strerror(errno));
 }
 
 // 0 = good, else failed at that line
-int scanPieces(int pieceStart){
+int scanPieces(struct FileData* f){
 	/* line processing
 	 *
 	 * command lines:
@@ -260,11 +223,11 @@ int scanPieces(int pieceStart){
 	 */
 
 	errorLine = 1;
-	for(struct Piece* p = listAt(pieceList, pieceStart); p != listEnd(pieceList); ++p){
+	for(struct Piece* p = listBeg(f->pieces); p != listEnd(f->pieces); ++p){
 		// a beginning PT_DOT is a command, a PT_STRING is and instruction, and not a PT_LINE is an error
 		if(p->type == PT_DOT){
 			// command line, send the line starting at 1 after PT_DOT to PT_LINE
-			if(!commandHandler(++p)){
+			if(!commandHandler(++p, f)){
 				addErrorMessage("command handler failure");
 				return errorLine;
 			}
@@ -275,12 +238,12 @@ int scanPieces(int pieceStart){
 		}else if(p->type == PT_STRING){
 			// instruction line
 			struct Instruction i;
-			
-			if((p = getInsLine(p, &i)) == NULL){
+
+			if((p = getInsLine(p, &i, f)) == NULL){
 				addErrorMessage("failed to form instruction from line");
 				return errorLine;
 			}
-			listAdd(&instructionList, &i, 1);
+			listAdd(&f->instructions, &i, 1);
 
 			// add instruction to memory
 			memImage[memIdx++] = i.opcode;
@@ -300,19 +263,19 @@ int scanPieces(int pieceStart){
 }
 
 // process an instruction line starting at piece pidx and put the reults into out, returning an index to the piece last scanned (end of line piece)
-struct Piece* getInsLine(struct Piece p[], struct Instruction* out){
+struct Piece* getInsLine(struct Piece p[], struct Instruction* out, struct FileData* f){
 	struct Instruction ins = {.expr = 0, .offset = memIdx, .size = 1};
 
 	// find the instruction name, ex: name of STA 0X8009 is STA
 	enum InstructionName insName = IN_NULL;
 	for(int idx = 0; insNameStrings[idx]; ++idx){
-		if(!strcmp(ESTR(p->stridx), insNameStrings[idx])){
+		if(!strcmp(stringAt(p->stridx), insNameStrings[idx])){
 			insName = idx; // enum identifer has value of index of string of enum identifier ([IN_AND] = "AND")
 			break;
 		}
 	}
 	if(insName == IN_NULL){
-		addErrorMessage("instruction not recognized: %s", ESTR(p->stridx));
+		addErrorMessage("instruction not recognized: %s", stringAt(p->stridx));
 		return NULL;
 	}
 
@@ -338,7 +301,7 @@ struct Piece* getInsLine(struct Piece p[], struct Instruction* out){
 		}
 	}else{
 		clearErrors();
-		ins.expr = p - (struct Piece*)listBeg(pieceList);
+		ins.expr = p - (struct Piece*)listBeg(f->pieces);
 	}
 
 	// skip to after expr
@@ -352,26 +315,25 @@ struct Piece* getInsLine(struct Piece p[], struct Instruction* out){
 	// find mode flags if any
 	int addidx = 1;
 	while(p->type != PT_LINE){
-		if(p->type == PT_STRING){
-			char* s = ESTR(p->stridx);
-			for(int idx = 0; s[idx]; ++idx){
-				if(strchr("XYIN", s[idx])){
-					if(addidx == 3){
-						addErrorMessage("too many mode flags: %s", s);
-						return NULL;
-					}
-					insMode[addidx++] = s[idx];
-				}else if(strchr("ZV", s[idx])){
-					insMode[0] = s[idx];
-					forceValue = true;
-				}else{
-					addErrorMessage("mode flags not recognized: %s", s);
+		if(p->type != PT_STRING){
+			addErrorMessage("mode flags not a string");
+			return NULL;
+		}
+		char* s = stringAt(p->stridx);
+		for(int idx = 0; s[idx]; ++idx){
+			if(strchr("XYIN", s[idx])){
+				if(addidx == 3){
+					addErrorMessage("too many mode flags: %s", s);
 					return NULL;
 				}
+				insMode[addidx++] = s[idx];
+			}else if(strchr("ZV", s[idx])){
+				insMode[0] = s[idx];
+				forceValue = true;
+			}else{
+				addErrorMessage("mode flags not recognized: %s", s);
+				return NULL;
 			}
-		}else{
-			addErrorMessage("mode flags not string type");
-			return NULL;
 		}
 		++p;
 	}
@@ -422,4 +384,14 @@ INS_NO_VAL:
 
 	*out = ins;
 	return p;
+}
+
+struct FileData newFileData(const char* name){
+	struct FileData f;
+	f.name = name;
+	f.pieces = listNew(sizeof(struct Piece), 100);
+	f.labels = listNew(sizeof(struct Label), 50);
+	f.instructions = listNew(sizeof(struct Instruction), 50);
+	f.commands = listNew(sizeof(struct Command), 50);
+	return f;
 }

@@ -6,6 +6,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "list.h"
+
+struct FileData{
+	const char* name;
+	struct List pieces;
+	struct List labels;
+	struct List instructions;
+	struct List commands;
+};
 
 // part of every piece struct, indentifies what data is in the union of each piece
 enum PieceType{
@@ -57,6 +66,8 @@ enum CID{
 	CID_CONST,	// create a label with a custom value
 	CID_ALLOC,	// create a label with an assembler defined value that is a memory block n bytes wide
 	CID_SET,	// set a memory location to have a value, evaluated after all instructions placed and after all other commands
+	CID_LABEL,
+	CID_STRING,
 	CID_NULL	// none
 };
 
@@ -85,6 +96,17 @@ struct Command{
 			size_t addr;		// index into pieceList for expression of address
 			size_t value;		// same but expression of value
 		} set;
+
+		struct{ // label command
+			size_t addr;
+			size_t name;
+		} label;
+
+		struct{
+			size_t name;
+			size_t value;
+			size_t offset;
+		} string;
 	};
 };
 

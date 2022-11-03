@@ -13,4 +13,6 @@ add_executable(mbasm
 	${CMAKE_SOURCE_DIR}/src/utility.c
 	${CMAKE_SOURCE_DIR}/src/list.c
 	${CMAKE_SOURCE_DIR}/src/error.c
+	${CMAKE_SOURCE_DIR}/src/stringmanip.c
+	${CMAKE_SOURCE_DIR}/src/commandeval.c
 )

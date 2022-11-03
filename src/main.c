@@ -5,25 +5,24 @@
 #include <stdint.h>
 #include <errno.h>
 #include <getopt.h>
+#include "types.h"
 #include "utility.h"
 #include "list.h"
-#include "types.h"
 #include "ins_values.h"
 #include "error.h"
+#include "stringmanip.h"
+#include "commandeval.h"
 
 #define BASE 0x8000
-#define PROGRAM_NAME "mbasm"
 #define EEPROM_IMAGE_SIZE 0x8000
 
-struct List labelList;
-struct List commandList;
-struct List instructionList;
-struct List pieceList;
+static const char* outputName = "out.mb";
 struct List stringCharsList;
 unsigned char* memImage;
 size_t memIdx = 0;
-const char* outputName = "out.mb";
+struct FileData* filesArray;
 
+struct List setCommands;
 struct{
 	bool verbose;
 	bool list;
@@ -32,149 +31,120 @@ struct{
 static void processArgs(int argc, char* argv[]);
 static void printVerbose(void);
 
+// get each file
+// per file:
+// get pieces
+// analyze pieces
+// make arrays of found labels, constants, and unsolved expressions
+// compare labels and constants to find dupes
+// eval expressions and sub in
+// assemble instructions and add to image
+
+int fssize;
+
 int main(int argc, char* argv[]){
 	// little endian check
 	unsigned n = 1;
 	testError(((char*)&n)[0] != 1, "little endian check failed");
 
 	// allocate output buffer for data
-	testError(!(memImage = calloc(EEPROM_IMAGE_SIZE, 1)), "eeprom image buffer alloc fail (%d)", EEPROM_IMAGE_SIZE);
-	
-	// inits
-	labelList = listNew(sizeof(struct Label), 50);
-	commandList = listNew(sizeof(struct Command), 50);
-	instructionList = listNew(sizeof(struct Instruction), 100);
-	stringCharsList = listNew(1, 100);
-	pieceList = listNew(sizeof(struct Piece), 100);
+	testError((memImage = calloc(EEPROM_IMAGE_SIZE, 1)) == NULL, "eeprom image buffer alloc fail (%d bytes)", EEPROM_IMAGE_SIZE);
+	stringCharsList = listNew(1, 1000);
 
 	processArgs(argc, argv);
-
-	// address label, takes value of current offset in memory where instruction/command is started
-	listAdd(&labelList, &(struct Label){.name = stringCharsList.elementCount, .type = LT_DEFINED}, 1);
-	listAdd(&stringCharsList, "__A", strlen("__A") + 1);
-
-	for(int a = optind; a < argc; ++a){
-		int pl = pieceList.elementCount;
-		createPiecesFromFile(argv[a]);
-		int scanres = scanPieces(pl);
-		if(scanres){
-			addErrorMessage("from file \"%s\" on line %d", argv[a], scanres);
+	// argc total
+	// index of optind is element number optind + 1
+	// argc - (optind + 1) - 1 = argc - optind
+	fssize = argc - optind;
+	filesArray = malloc(sizeof(struct FileData) * fssize);
+	for(int a = 0; a < argc - optind; ++a){
+		filesArray[a] = newFileData(argv[a + optind]);
+		createPieces(filesArray + a);
+		int errorLine = scanPieces(filesArray + a);
+		if(errorLine){
+			addErrorMessage("from file \"%s\" on line %d", filesArray[a].name, errorLine);
 			printErrorsExit();
 		}
 	}
 
 	// evaluate commands
-	// make function
-	struct List setCommands = listNew(sizeof(int) * 2, 50);
-	int complete = 0;
-	while(complete != commandList.elementCount){
-		int change = complete;
-		for(struct Command* c = listBeg(commandList); c != listEnd(commandList); ++c){
-			int v;
-			((struct Label*)listAt(labelList, 0))->value = 0;
-			switch(c->id){
-				case CID_DROP:
-					// setting __A
-					((struct Label*)listAt(labelList, 0))->value = c->drop.offset + BASE;
-					if(evalExpression(listAt(pieceList, c->drop.expr), &v)){
-						memImage[c->drop.offset] = v;
-						complete++;
-						c->id = CID_NULL;
-					}
-					break;
-				case CID_CONST:
-					if(evalExpression(listAt(pieceList, c->constant.expr), &v)){
-						struct Piece* name = listAt(pieceList, c->constant.name);
-						struct Label l = {.value = v, .type = LT_DEFINED, .name = name->stridx};
-						listAdd(&labelList, &l, 1);
-						complete++;
-						c->id = CID_NULL;
-					}
-					break;
-				case CID_ALLOC:
-					if(evalExpression(listAt(pieceList, c->alloc.expr), &v)){
-						struct Piece* name = listAt(pieceList, c->alloc.name);
-						struct Label l = {.value = v, .type = LT_ALLOC, .name = name->stridx};
-						listAdd(&labelList, &l, 1);
-						complete++;
-						c->id = CID_NULL;
-					}
-					break;
-				case CID_SET:
-					if(evalExpression(listAt(pieceList, c->set.addr), &v)){
-						int v2;
-						if(evalExpression(listAt(pieceList, c->set.value), &v2)){
-							listAdd(&setCommands, &(int[2]){v, v2}, 1);
-							//memImage[v % 0x8000] = v2;
-							complete++;
-							c->id = CID_NULL;
-						}
-					}
-					break;
-				case CID_NULL:
-					break;
-			}
+	setCommands = listNew(sizeof(int) * 2, 50);
+	for(int fn = 0; fn < fssize; ++fn){
+		struct FileData* cf = filesArray + fn;
+		int complete = 0;
+		while(complete != cf->commands.elementCount){
+			int res = commandEval(cf);
+			testError(res == 0, "commands entered deadlock state, can't continue evaluation");
+			complete += res;
 		}
-		testError(change == complete, "not all commands could be processed");
 	}
 	clearErrors();
 
-	// adjust label values to be aligned at 0x8000 offset
-	for(struct Label* l = listBeg(labelList); l != listEnd(labelList); ++l){
-		static int allocAddr = 0x200;
-		if(l->type == LT_UNDEFINED){
-			l->value += BASE;
+	// this looks really bad but it isnt
+	// for each label from each file, check its string index with every other label from every file
+	// error if the string indexes match, duplicate label
+	// also adjust label values depending on type and find __START and __INTERRUPT
+	struct Label* startLabel = NULL, *intLabel = NULL;
+
+	for(int z = 0; z < fssize; ++z){
+		for(int a = 0; a < filesArray[z].labels.elementCount; ++a){
+			int csi = ((struct Label*)listAt(filesArray[z].labels, a))->name;
+			for(int b = 0; b < fssize; ++b){
+				for(int c = 0; c < filesArray[b].labels.elementCount; ++c){
+					int i = ((struct Label*)listAt(filesArray[b].labels, c))->name;
+					if(i == csi && !(z == b && a == c)){
+						simpleError("duplicate label name found \"%s\"\nfrom files \"%s\" and \"%s\"", stringAt(i), filesArray[z].name, filesArray[b].name);
+					}
+				}
+			}
+			// adjust label values to be aligned at 0x8000 offset
+			struct Label* l = listAt(filesArray[z].labels, a);
+			static int allocAddr = 0x200;
+			if(l->type == LT_UNDEFINED){
+					l->value += BASE;
+			}else if(l->type == LT_ALLOC){
+				int sz = l->value;
+				l->value = allocAddr;
+				allocAddr += sz;
+			}
+			l->type = LT_DEFINED;
+			for(struct Label* l = listBeg(filesArray[z].labels); l != listEnd(filesArray[z].labels); ++l){
+				char* str = stringAt(l->name);
+				if(!strcmp(str, "__START")){
+					//testError(startLabel, "multiple start labels found");
+					startLabel = l;
+				}else if(!strcmp(str, "__INTERRUPT")){
+					//testError(intLabel, "multiple interrupt labels found");
+					intLabel = l;
+				}
+			}
 		}
-		if(l->type == LT_ALLOC){
-			int sz = l->value;
-			l->value = allocAddr;
-			allocAddr += sz;
-		}
-		l->type = LT_DEFINED;
 	}
 
 	// form instructions fully
-	for(struct Instruction* i = listBeg(instructionList); i != listEnd(instructionList); ++i){
-		// setting __A
-		((struct Label*)listAt(labelList, 0))->value = i->offset + BASE;
-
-		// eval expression if needed
-		if(!i->expr){
-			continue;
-		}
-		int v;
-		// fail if expression not evaluated
-		if(!evalExpression(listAt(pieceList, i->expr), &v)){
-			addErrorMessage(printExpr(listAt(pieceList, i->expr)));
-			addErrorMessage("failed to evaluate expression:");
-			printErrorsExit();
-		}
-		i->value = v - i->value; // special for branch instructions
-		if(i->size >= 2){
-			memImage[i->offset + 1] = i->value;
-		}
-		if(i->size == 3){
-			memImage[i->offset + 2] = i->value >> 8;
-		}
-	}
-
-	// ensuring start and interrupt labels exists
-	struct Label* startLabel = NULL, *intLabel = NULL;
-
-	for(size_t a = 0; a < labelList.elementCount; ++a){
-		struct Label* l = listAt(labelList, a);
-		char* str = ESTR(l->name);
-		if(!strcmp(str, "__START")){
-			testError(startLabel, "multiple start labels found");
-			startLabel = l;
-		}else if(!strcmp(str, "__INTERRUPT")){
-			testError(intLabel, "multiple interrupt labels found");
-			intLabel = l;
-		}
-		for(size_t b = a + 1; b < labelList.elementCount; ++b){
-			testError(!strcmp(str, ESTR(((struct Label*)listAt(labelList, b))->name)), "duplicate label \"%s\"", str);
+	for(int z = 0; z < fssize; ++z){
+		for(struct Instruction* i = listBeg(filesArray[z].instructions); i != listEnd(filesArray[z].instructions); ++i){
+			// eval expression if needed
+			if(!i->expr){
+				continue;
+			}
+			int v;
+			// fail if expression not evaluated
+			if(!evalExpression(listAt(filesArray[z].pieces, i->expr), &v)){
+				addErrorMessage(printExpr(listAt(filesArray[z].pieces, i->expr)));
+				addErrorMessage("failed to evaluate expression:");
+				printErrorsExit();
+			}
+			i->value = v - i->value; // special for branch instructions
+			if(i->size >= 2){
+				memImage[i->offset + 1] = i->value;
+			}
+			if(i->size == 3){
+				memImage[i->offset + 2] = i->value >> 8;
+			}
 		}
 	}
+
 
 	testError(!startLabel, "no start label");
 	testError(!intLabel, "no interrupt label");
@@ -215,7 +185,7 @@ int main(int argc, char* argv[]){
 
 
 static void printVerbose(void){
-	printf("%zu instructions created\n", instructionList.elementCount);
+	/*printf("%zu instructions created\n", instructionList.elementCount);
 	printf("instructions:\nOP   ADDR   VALUE\n");
 	for(struct Instruction* i = listBeg(instructionList); i != listEnd(instructionList); ++i){
 		printf("%.2X   %.4X   ", i->opcode, i->offset);
@@ -229,13 +199,13 @@ static void printVerbose(void){
 	}
 	printf("%zu labels created\nlabels:\nNAME  VALUE\n", labelList.elementCount);
 	for(struct Label* lp = listBeg(labelList); lp != listEnd(labelList); ++lp){
-		printf("%s  %X\n", ESTR(lp->name), lp->value);
-	}
+		printf("%s  %X\n", stringAt(lp->name), lp->value);
+	}*/
 }
 
 static void processArgs(int argc, char* argv[]){
 	static const char* helpMessage =
-		PROGRAM_NAME " [options] [infiles]\n"
+		"mbasm [options] [infiles]\n"
 		"options:\n"
 		"-v / --version, print information about symbols and data\n"
 		"-h / --help, print this info\n"
