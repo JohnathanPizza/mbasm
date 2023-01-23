@@ -45,8 +45,8 @@ bool evalExpression(struct Piece p[], int* res){
 				break;
 			case PT_ADD:
 			case PT_SUB:
-			case PT_MUL:
-			case PT_DIV:
+			case PT_RSHIFT:
+			case PT_LSHIFT:
 				// do the math operation
 				;
 				int* v = listAt(valueList, 0);
@@ -58,11 +58,11 @@ bool evalExpression(struct Piece p[], int* res){
 						case PT_SUB:
 							result -= v[a];
 							break;
-						case PT_MUL:
-							result *= v[a];
+						case PT_RSHIFT:
+							result >>= v[a];
 							break;
-						case PT_DIV:
-							result /= v[a];
+						case PT_LSHIFT:
+							result <<= v[a];
 							break;
 					}
 				}
@@ -126,8 +126,8 @@ void createPieces(struct FileData* f){
 		PT_EXPR_DELIM,
 		PT_ADD,
 		PT_SUB,
-		PT_DIV,
-		PT_MUL,
+		PT_RSHIFT,
+		PT_LSHIFT,
 		PT_LITERAL,
 		PT_LINE,
 		';',
@@ -150,15 +150,29 @@ void createPieces(struct FileData* f){
 				symbol = *c;
 				if(*c == '\0' || *c == ';'){
 					symbol = PT_LINE;
-				}else if(*c == PT_LITERAL){
+				}else if(*c == PT_LITERAL && !inLit){
 					inLit = true;
 					inString = true;
 					stringPieceBegin = c + 1;
+					++c;
+					continue;
 				}
 			}
 			
-			// literal goes until , or newline
-			if(inLit && symbol != PT_LINE && symbol != PT_EXPR_DELIM){
+			// literal goes until newline or "
+			if(inLit){
+				if(symbol == PT_LINE || symbol == PT_LITERAL){
+					inLit = false;
+					inString = false;
+					struct Piece p;
+					p.type = PT_STRING;
+					p.stridx = addString(stringPieceBegin, c - stringPieceBegin);
+					listAdd(&f->pieces, &p, 1);
+					if(symbol == PT_LINE){
+						p.type = PT_LINE;
+						listAdd(&f->pieces, &p, 1);
+					}
+				}
 				++c;
 				continue;
 			}
@@ -172,16 +186,14 @@ void createPieces(struct FileData* f){
 				inString = false;
 				int len = c - stringPieceBegin;
 
-				if(!inLit){
-					for(int a = 0; a < len; ++a){
-						stringPieceBegin[a] = toupper(stringPieceBegin[a]);
-					}
+				for(int a = 0; a < len; ++a){
+					stringPieceBegin[a] = toupper(stringPieceBegin[a]);
 				}
 
 				// add piece to piece list
 				int v;
 				struct Piece p;
-				if(!inLit && (v = strToInt(stringPieceBegin, len)) >= 0){
+				if((v = strToInt(stringPieceBegin, len)) >= 0){
 					p.type = PT_INTEGER;
 					p.integer = v;
 				}else{
@@ -189,7 +201,6 @@ void createPieces(struct FileData* f){
 					p.stridx = addString(stringPieceBegin, len);
 				}
 				listAdd(&f->pieces, &p, 1);
-				inLit = false;
 			}
 
 			// add symbol if found and not a comment symbol and cancel string

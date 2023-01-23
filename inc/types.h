@@ -27,8 +27,8 @@ enum PieceType{
 	PT_ADD = '+',
 	PT_SUB = '-',
 	PT_LITERAL = '"',
-	PT_DIV = '/',
-	PT_MUL = '*'
+	PT_RSHIFT = '>',
+	PT_LSHIFT = '<'
 };
 
 // most basic unit of information for processing
@@ -62,7 +62,8 @@ struct Instruction{
 // change name maybe...
 // enum for identifying what command occupies the union
 enum CID{
-	CID_DROP,	// place a value at address in memory where this command occurs
+	CID_DROP,	// place an 8-bit value at address in memory where this command occurs
+	CID_DROP16,	// place a 16-bit value at address in memory where this command occurs
 	CID_CONST,	// create a label with a custom value
 	CID_ALLOC,	// create a label with an assembler defined value that is a memory block n bytes wide
 	CID_SET,	// set a memory location to have a value, evaluated after all instructions placed and after all other commands
@@ -81,6 +82,11 @@ struct Command{
 			uint16_t offset;	// address offset to place the value
 			size_t expr;		// index into pieceList for start of expression for the value
 		} drop;
+		
+		struct{ // drop16 command
+			uint16_t offset;	// address offset to place the value
+			size_t expr;		// index into pieceList for start of expression for the value
+		} drop16;
 
 		struct{ // constant command
 			size_t name;		// index into characterStringList for name of constant label

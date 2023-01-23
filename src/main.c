@@ -69,16 +69,21 @@ int main(int argc, char* argv[]){
 
 	// evaluate commands
 	setCommands = listNew(sizeof(int) * 2, 50);
+	int totalCommands = 0;
 	for(int fn = 0; fn < fssize; ++fn){
-		struct FileData* cf = filesArray + fn;
-		int complete = 0;
-		while(complete != cf->commands.elementCount){
-			int res = commandEval(cf);
-			testError(res == 0, "commands entered deadlock state, can't continue evaluation");
-			complete += res;
-		}
+		totalCommands += filesArray[fn].commands.elementCount;
 	}
-	clearErrors();
+	int completeCommands = 0;
+	while(completeCommands != totalCommands){
+		int change = 0;
+		for(int fn = 0; fn < fssize; ++fn){
+			struct FileData* cf = filesArray + fn;
+			change += commandEval(cf);
+		}
+		testError(change == 0, "commands entered deadlock state, can't continue evaluation");
+		completeCommands += change;
+	}
+	clearErrors(); // no?
 
 	// this looks really bad but it isnt
 	// for each label from each file, check its string index with every other label from every file
@@ -111,10 +116,8 @@ int main(int argc, char* argv[]){
 			for(struct Label* l = listBeg(filesArray[z].labels); l != listEnd(filesArray[z].labels); ++l){
 				char* str = stringAt(l->name);
 				if(!strcmp(str, "__START")){
-					//testError(startLabel, "multiple start labels found");
 					startLabel = l;
 				}else if(!strcmp(str, "__INTERRUPT")){
-					//testError(intLabel, "multiple interrupt labels found");
 					intLabel = l;
 				}
 			}
@@ -131,8 +134,8 @@ int main(int argc, char* argv[]){
 			int v;
 			// fail if expression not evaluated
 			if(!evalExpression(listAt(filesArray[z].pieces, i->expr), &v)){
-				addErrorMessage(printExpr(listAt(filesArray[z].pieces, i->expr)));
-				addErrorMessage("failed to evaluate expression:");
+				//addErrorMessage(printExpr(listAt(filesArray[z].pieces, i->expr)));
+				addErrorMessage("in file \"%s\": failed to evaluate expression:\n%s", filesArray[z].name, printExpr(listAt(filesArray[z].pieces, i->expr)));
 				printErrorsExit();
 			}
 			i->value = v - i->value; // special for branch instructions

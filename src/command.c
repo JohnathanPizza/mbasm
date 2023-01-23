@@ -17,6 +17,7 @@ static const char* formats[] = {
 	[CID_ALLOC] = ".ALLOC STRING:LABEL NAME, EXPR:ALLOC SIZE",
 	[CID_STRING] = ".STRING STRING:STRING NAME, STRING:CONTENTS",
 	[CID_SET] = ".SET EXPR:ADDRESS, EXPR:VALUE",
+	[CID_DROP16] = ".DROP16 EXPR:DROP VALUE",
 };
 
 // these static functions check the formatting and create a command structure
@@ -66,6 +67,21 @@ static struct Command comConst(struct Piece in[]){
 	c.id = CID_CONST;
 	c.constant.name = in[0].stridx;
 	c.constant.expr = p - (struct Piece*)currf->pieces.data;
+	return c;
+}
+
+// for DROP16 command, place a byte value at current relative position in memory
+static struct Command comDrop16(struct Piece in[]){
+	struct Command c = {.id = CID_NULL};
+
+	if(exprArrayLen(in) > -2){
+		addErrorMessage(formats[CID_DROP16]);
+		addErrorMessage("first/final argument given incorrectly");
+		return c;
+	}
+	c.id = CID_DROP16;
+	c.drop16.expr = in - (struct Piece*)currf->pieces.data;
+	c.drop16.offset = (memIdx += 2);
 	return c;
 }
 
@@ -126,9 +142,9 @@ static struct Command comString(struct Piece in[]){
 		return c;
 	}
 	p += 2;
-	if(exprArrayLen(p) > -2){
+	if(exprArrayLen(p) != -2){
 		addErrorMessage(formats[CID_STRING]);
-		addErrorMessage("second and final argument given incorrectly");
+		addErrorMessage("second/final argument given incorrectly");
 		return c;
 	}
 	if(p[0].type != PT_STRING){
@@ -157,7 +173,7 @@ static struct Command comSet(struct Piece in[]){
 	p += exprArrayLen(p);
 	if(exprArrayLen(p) > -2){
 		addErrorMessage(formats[CID_SET]);
-		addErrorMessage("second and final argument given incorrectly");
+		addErrorMessage("second/final argument given incorrectly");
 		return c;
 	}
 
@@ -187,6 +203,7 @@ bool commandHandler(struct Piece in[], struct FileData* f){
 		{"C", comConst},
 		{"STRING", comString},
 		{"DROP", comDrop},
+		{"DROP16", comDrop16},
 		{"ALLOC", comAlloc},
 		{"SET", comSet},
 	};
