@@ -81,7 +81,8 @@ static struct Command comDrop16(struct Piece in[]){
 	}
 	c.id = CID_DROP16;
 	c.drop16.expr = in - (struct Piece*)currf->pieces.data;
-	c.drop16.offset = (memIdx += 2);
+	c.drop16.offset = memIdx;
+	memIdx += 2;
 	return c;
 }
 

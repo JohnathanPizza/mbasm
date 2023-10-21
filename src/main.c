@@ -70,20 +70,30 @@ int main(int argc, char* argv[]){
 	// evaluate commands
 	setCommands = listNew(sizeof(int) * 2, 50);
 	int totalCommands = 0;
+	int* commandCt = malloc(sizeof(int) * fssize);
 	for(int fn = 0; fn < fssize; ++fn){
-		totalCommands += filesArray[fn].commands.elementCount;
+		totalCommands += (commandCt[fn] = filesArray[fn].commands.elementCount);
 	}
 	int completeCommands = 0;
 	while(completeCommands != totalCommands){
 		int change = 0;
 		for(int fn = 0; fn < fssize; ++fn){
 			struct FileData* cf = filesArray + fn;
-			change += commandEval(cf);
+			int completed = commandEval(cf);
+			change += completed;
+			commandCt[fn] -= completed;
 		}
-		testError(change == 0, "commands entered deadlock state, can't continue evaluation");
+		//testError(change == 0, "commands entered deadlock state, can't continue evaluation");
+		if(change == 0){
+			for(int a = 0; a < fssize; ++a){
+				fprintf(stderr, "%d left in %s\n", commandCt[a], filesArray[a].name);
+			}
+			simpleError("commands entered deadlock state, can't continue evaluation");
+		}
 		completeCommands += change;
 	}
 	clearErrors(); // no?
+	free(commandCt);
 
 	// this looks really bad but it isnt
 	// for each label from each file, check its string index with every other label from every file
